@@ -1,18 +1,3 @@
-let shaderCanvas;
-let shaderPrimitive;
-
-function setup() {
-  createCanvas(300, 300, WEBGL);
-  // Make the shader run faster 
-  // reducing number of pixels 
-  pixelDensity(1);
-
-  // Custom shaders using GLSL
-  shaderCanvas = createShader(
-    vertex, fragmentCanvas
-  );
-}
-
 let vertex = `
 // GLSL
 precision highp float;
@@ -29,6 +14,11 @@ void main() {
 
 // Copied from an old shadertoy study of mine: https://www.shadertoy.com/view/tsdyWl
 let fragmentCanvas = `
+precision highp float;
+
+uniform vec2 iResolution;
+uniform float iTime;
+uniform vec2 iMouse;
 
 void sphereFold(inout vec3 z, inout float dz)
 {
@@ -59,7 +49,7 @@ float mandelBox(vec3 z)
 {
     float scale = 2.0;
     scale += sin(iTime * 0.25) * 0.5;
-    int iterations = 16;
+    const int iterations = 16;
     
 	vec3 offset = z;
 	float dr = 1.0;
@@ -81,7 +71,7 @@ float getDist(vec3 p) {
 
 float rayMarch(vec3 ro, vec3 rd)
 {
-    int maxSteps = 100;
+    const int maxSteps = 100;
 	float maxDist = 100.0;
     float surfDist = 0.01;
     
@@ -132,8 +122,8 @@ mat3 calcLookAtMatrix( in vec3 ro, in vec3 ta, in float roll )
     return mat3( uu, vv, ww );
 }
 
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
+void main() {
+    vec2 fragCoord = gl_FragCoord.xy;
     vec2 xy = (fragCoord.xy - iResolution.xy/2.0) / max(iResolution.xy.x, iResolution.xy.y);
     vec3 col = vec3(0);
     
@@ -152,11 +142,32 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     if( dist!=-1.0 ) dif = getLight(p);
     col = vec3(dif);
     
-    fragColor = vec4(col,1.0);
+    gl_FragColor = vec4(col, 1.0);
 }
 `;
 
+let shaderCanvas;
+
+function setup() {
+    createCanvas(300, 300, WEBGL);
+    // Make the shader run faster 
+    // reducing number of pixels 
+    pixelDensity(1);
+
+    // Custom shaders using GLSL
+    shaderCanvas = createShader(
+        vertex, fragmentCanvas
+    );
+}
+
 function draw() {
-  // Apply color shader in canvas
-  filter(shaderCanvas);
+    clear();
+
+    // Pass uniform variables
+    shaderCanvas.setUniform('iResolution', [width, height]);
+    shaderCanvas.setUniform('iTime', millis() * 0.001);
+    shaderCanvas.setUniform('iMouse', [mouseX, height - mouseY]);
+
+    // Apply color shader in canvas
+    filter(shaderCanvas);
 }
