@@ -1,14 +1,10 @@
 let vertex = `
 // GLSL
 precision highp float;
-
 attribute vec3 aPosition;
 
-uniform mat4 uModelViewMatrix;
-uniform mat4 uProjectionMatrix;
-
 void main() {
-  gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+  gl_Position = vec4(aPosition.xy, 0.0, 1.0);
 }
 `;
 
@@ -17,8 +13,9 @@ let fragmentCanvas = `
 precision highp float;
 
 uniform vec2 iResolution;
-uniform float iTime;
-uniform vec2 iMouse;
+
+// Stuff for p5 orbitControl()
+uniform vec3 uCamPos;
 
 void sphereFold(inout vec3 z, inout float dz)
 {
@@ -48,7 +45,6 @@ void boxFold(inout vec3 z, inout float dz)
 float mandelbox(vec3 z)
 {
     float scale = 2.0;
-    scale += sin(iTime * 0.25) * 0.5;
     const int iterations = 16;
     
 	vec3 offset = z;
@@ -69,23 +65,25 @@ float getDist(vec3 p) {
     return mandelbox(p);
 }
 
-float rayMarch(vec3 ro, vec3 rd)
+vec2 rayMarch(vec3 ro, vec3 rd)
 {
     const int maxSteps = 100;
 	float maxDist = 100.0;
     float surfDist = 0.01;
     
 	float dO = 0.0;
+    float steps = 0.0;
     
     for(int i = 0; i < maxSteps; i++)
     {
     	vec3 p = ro + rd * dO;
         float dS = getDist(p);
         dO += dS;
+        steps = float(i);
         if(dO > maxDist || dS < surfDist) break;
     }
     if (dO > maxDist) dO = -1.0;
-    return dO;
+    return vec2(dO, steps);
 }
 
 vec3 getNormal(vec3 p)
@@ -104,70 +102,78 @@ vec3 getNormal(vec3 p)
 float getLight(vec3 p)
 {
 	vec3 lightPos = vec3(0, 35, 0);
-    lightPos.xz += vec2(sin(iTime), cos(iTime))*40.;
     vec3 l = normalize(lightPos - p);
     vec3 n = getNormal(p);
     
     float dif = clamp(dot(n, l), 0., 1.);
-    float d = rayMarch(p + n * 0.01 * 2., l);
+    float d = rayMarch(p + n * 0.01 * 2., l).x;
     if(d < length(lightPos - p)) dif *= .1;
     return dif;
 }
 
-mat3 calcLookAtMatrix(in vec3 ro, in vec3 ta, in float roll)
+mat3 calcLookAtMatrix(in vec3 ro, in vec3 ta)
 {
     vec3 ww = normalize(ta - ro);
-    vec3 uu = normalize(cross(ww, vec3(sin(roll), cos(roll), 0.0)));
+    vec3 upRef = vec3(0.0, 1.0, 0.0);
+    vec3 uu = normalize(cross(upRef, ww));
     vec3 vv = normalize(cross(uu, ww));
     return mat3(uu, vv, ww);
 }
 
 void main() {
     vec2 fragCoord = gl_FragCoord.xy;
-    vec2 xy = (fragCoord.xy - iResolution.xy / 2.0) / max(iResolution.xy.x, iResolution.xy.y);
-    vec3 col = vec3(0);
+    // Invert Y coordinate so orbit drag matches mouse direction naturally
+    vec2 xy = (fragCoord - iResolution.xy * 0.5) / max(iResolution.x, iResolution.y);
+    xy.y = -xy.y;
     
-   	vec3 campos = vec3(35.0, 10.0, 35.0);
+    // Patch in p5 camera
+    vec3 campos = uCamPos;
     vec3 camtar = vec3(0.0, 0.0, 0.0);
+    mat3 camMat = calcLookAtMatrix(campos, camtar);
+    vec3 camdir = normalize(camMat * vec3(xy, 1.5));
     
-    //vec3 campos = vec3(-0.1, 0.45, 0.);
-    //vec3 camtar = vec3(1.7, .2, -0.6);
-    
-    mat3 camMat = calcLookAtMatrix(campos, camtar, 0.0);
-    vec3 camdir = normalize(camMat * vec3(xy, 1.0));
-    
-    float dist = rayMarch(campos, camdir);
-    float dif = 0.0;
+    vec2 hit = rayMarch(campos, camdir);
+    float dist = hit.x;
+    float steps = hit.y;
+
+    vec3 col = vec3(0.03, 0.03, 0.05);
     vec3 p = campos + camdir * dist;
-    if (dist != -1.0) dif = getLight(p);
-    col = vec3(dif);
-    
+    if (dist > 0.0) {
+        vec3 p = campos + camdir * dist;
+        float ao = clamp(1.0 - (steps / 100.0) * 1.6, 0.0, 1.0);
+        col = vec3(ao);
+    }
     gl_FragColor = vec4(col, 1.0);
 }
 `;
 
 let shaderCanvas;
+let cam;
 
 function setup() {
-    createCanvas(300, 300, WEBGL);
-    // Make the shader run faster 
-    // reducing number of pixels 
+    createCanvas(600, 600, WEBGL);
     pixelDensity(1);
 
     // Custom shaders using GLSL
-    shaderCanvas = createShader(
-        vertex, fragmentCanvas
-    );
+    shaderCanvas = createShader(vertex, fragmentCanvas);
+
+    // Initialize camera object
+    cam = createCamera();
+    cam.setPosition(35, 15, 35);
+    cam.lookAt(0, 0, 0);
 }
 
 function draw() {
     clear();
 
-    // Pass uniform variables
-    shaderCanvas.setUniform('iResolution', [width, height]);
-    shaderCanvas.setUniform('iTime', millis() * 0.001);
-    shaderCanvas.setUniform('iMouse', [mouseX, height - mouseY]);
+    // Set up native p5 camera control
+    orbitControl();
+    let camPos = [cam.eyeX, cam.eyeY, cam.eyeZ];
 
-    // Apply color shader in canvas
-    filter(shaderCanvas);
+    // Pass uniform variables
+    shader(shaderCanvas);
+    shaderCanvas.setUniform('uCamPos', camPos);
+    shaderCanvas.setUniform('iResolution', [width, height]);
+
+    quad(-1, -1, 1, -1, 1, 1, -1, 1);
 }
