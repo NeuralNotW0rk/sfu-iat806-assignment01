@@ -1,179 +1,213 @@
-let vertex = `
-// GLSL
-precision highp float;
-attribute vec3 aPosition;
+// Bounding (hyper)box dimensions
+const width = 600;
+const height = 600;
 
-void main() {
-  gl_Position = vec4(aPosition.xy, 0.0, 1.0);
-}
-`;
+// Audio constants
+const f_base = 200;
+const f_min = 200;
+const f_max = 800;
 
-// Copied from an old shadertoy study of mine: https://www.shadertoy.com/view/tsdyWl
-let fragmentCanvas = `
-precision highp float;
+const sampleRate = Tone.context.sampleRate;
+const duration = 0.04; // 40 milliseconds
+const length = Math.floor(sampleRate * duration);
 
-uniform vec2 iResolution;
+const channelData = new Float32Array(length);
 
-// Stuff for p5 orbitControl()
-uniform vec3 uCamPos;
+let grainBuffer;
+let limiter;
 
-void sphereFold(inout vec3 z, inout float dz)
-{
-    float r = 0.5;
-    
-    float fixedRadius2 = 2.0;
-    float minRadius2 = 0.1;
-    
-	float r2 = dot(z, z);
-	if (r < minRadius2) { 
-		float temp = (fixedRadius2 / minRadius2);
-		z *= temp;
-		dz *= temp;
-	} else if (r2 < fixedRadius2) { 
-		float temp =(fixedRadius2 / r2);
-		z *= temp;
-		dz *= temp;
-	}
-}
-
-void boxFold(inout vec3 z, inout float dz)
-{
-    float foldingLimit = 1.0;
-	z = clamp(z, -foldingLimit, foldingLimit) * 2.0 - z;
-}
-
-float mandelbox(vec3 z)
-{
-    float scale = 2.0;
-    const int iterations = 16;
-    
-	vec3 offset = z;
-	float dr = 1.0;
-	for (int n = 0; n < iterations; n++)
-    {
-		boxFold(z, dr); 
-		sphereFold(z, dr);
-        z = scale * z + offset;
-        dr = dr * abs(scale) + 1.0;
-	}
-	float r = length(z);
-	return r / abs(dr);
-}
-
-
-float getDist(vec3 p) {
-    return mandelbox(p);
-}
-
-vec2 rayMarch(vec3 ro, vec3 rd)
-{
-    const int maxSteps = 100;
-	float maxDist = 100.0;
-    float surfDist = 0.01;
-    
-	float dO = 0.0;
-    float steps = 0.0;
-    
-    for(int i = 0; i < maxSteps; i++)
-    {
-    	vec3 p = ro + rd * dO;
-        float dS = getDist(p);
-        dO += dS;
-        steps = float(i);
-        if(dO > maxDist || dS < surfDist) break;
+// Prepare audio context
+function setupAudio() {
+    // Pre-calculate grain sample
+    for (let i = 0; i < length; i++) {
+        const t = i / sampleRate;
+        const env = 0.5 * (1 - Math.cos((2 * Math.PI * i) / length)); // Hann envelope
+        channelData[i] = Math.sin(2 * Math.PI * f_base * t) * env;
     }
-    if (dO > maxDist) dO = -1.0;
-    return vec2(dO, steps);
+
+    // Limiter to avoid clipping
+    limiter = new Tone.Limiter(-3).toDestination();
+
+    // Create buffer
+    grainBuffer = Tone.ToneAudioBuffer.fromArray(channelData);
 }
 
-vec3 getNormal(vec3 p)
-{
-	float d = getDist(p);
-    vec2 e = vec2(.01, 0);
-    
-    vec3 n = d - vec3(
-    	getDist(p - e.xyy),
-    	getDist(p - e.yxy),
-    	getDist(p - e.yyx));
-    
-    return normalize(n);
+// Play a single audio grain
+function playGrain(freq, gain = 0.5) {
+    // Cancel if audio is not set up
+    if (Tone.context.state !== "running" || !grainBuffer) return;
+
+    // Create a buffer source 
+    const source = new Tone.ToneBufferSource(grainBuffer);
+
+    // Resample pitch relative to base
+    source.playbackRate.value = Math.max(0.1, freq / f_base);
+
+    const dynamicGain = new Tone.Gain(gain * (1 / Math.sqrt(n)));
+
+    source.connect(dynamicGain);
+    dynamicGain.connect(limiter);
+
+    source.start();
 }
 
-float getLight(vec3 p)
-{
-	vec3 lightPos = vec3(0, 35, 0);
-    vec3 l = normalize(lightPos - p);
-    vec3 n = getNormal(p);
-    
-    float dif = clamp(dot(n, l), 0., 1.);
-    float d = rayMarch(p + n * 0.01 * 2., l).x;
-    if(d < length(lightPos - p)) dif *= .1;
-    return dif;
-}
+// Ball param limits
+const n_max = 1000;
+const n_min = 1;
+const r_max = 20;
+const r_min = 10;
 
-mat3 calcLookAtMatrix(in vec3 ro, in vec3 ta)
-{
-    vec3 ww = normalize(ta - ro);
-    vec3 upRef = vec3(0.0, 1.0, 0.0);
-    vec3 uu = normalize(cross(upRef, ww));
-    vec3 vv = normalize(cross(uu, ww));
-    return mat3(uu, vv, ww);
-}
+// Physical constants
+const v_max = 20.0;
+const v_min = 2.0;
+const drag = 0.01; // Drag coefficient (0-1)
+const elast = 0.9; // Collision elasticity (0-1)
+const grav = 1.0; // Acceleration due to gravity (pixels per frame^2)
 
-void main() {
-    vec2 fragCoord = gl_FragCoord.xy;
-    // Invert Y coordinate so orbit drag matches mouse direction naturally
-    vec2 xy = (fragCoord - iResolution.xy * 0.5) / max(iResolution.x, iResolution.y);
-    xy.y = -xy.y;
-    
-    // Patch in p5 camera
-    vec3 campos = uCamPos;
-    vec3 camtar = vec3(0.0, 0.0, 0.0);
-    mat3 camMat = calcLookAtMatrix(campos, camtar);
-    vec3 camdir = normalize(camMat * vec3(xy, 1.5));
-    
-    vec2 hit = rayMarch(campos, camdir);
-    float dist = hit.x;
-    float steps = hit.y;
+let balls = [];
+let synth;
+let n = 1;
+let amp = 1.0;
 
-    vec3 col = vec3(0.03, 0.03, 0.05);
-    vec3 p = campos + camdir * dist;
-    if (dist > 0.0) {
-        vec3 p = campos + camdir * dist;
-        float ao = clamp(1.0 - (steps / 100.0) * 1.6, 0.0, 1.0);
-        col = vec3(ao);
+class Ball {
+    constructor(randomize = true) {
+        // Radius
+        this.r = r_min;
+        this.f = f_min;
+
+        // Spatial vectors
+        this.pos = createVector(0.0, 0.0);
+        this.vel = createVector(0.0, 0.0);
+
+        // Color
+        this.red = 0;
+        this.blue = 0;
+        this.green = 0;
+
+        if (randomize) {
+            // Random size
+            // this.r = random(r_min, r_max);
+
+            // Random position
+            this.pos.x = random(this.r, width - this.r);
+            this.pos.y = random(this.r, height - this.r);
+
+            // Random color
+            this.red = random(0, 255);
+            this.blue = random(0, 255);
+            this.green = random(0, 255);
+        }
     }
-    gl_FragColor = vec4(col, 1.0);
-}
-`;
 
-let shaderCanvas;
-let cam;
+    pingX() {
+        let f = (1 - this.pos.y / height) * f_max + f_min + random(-10, 10);
+        playGrain(f, Math.min(Math.abs(this.vel.x) / v_max, 1.0));
+    }
+
+    pingY() {
+        let f = f_base + random(-10, 10);
+        playGrain(f, Math.min(Math.abs(this.vel.y) / v_max, 1.0));
+    }
+
+    update() {
+        // Move
+        this.pos.add(this.vel);
+
+        // Gravity (deactivates when ball is roughly in contact with ground)
+        if (this.pos.y < height - this.r * 1.2) {
+            this.vel.y += grav;
+        }
+
+        // Drag
+        this.vel.mult(1.0 - drag);
+    }
+
+    render() {
+        noStroke();
+        // Map z position to alpha channel
+        fill(color(this.red, this.blue, this.green, 200));
+        circle(this.pos.x, this.pos.y, this.r * 2);
+    }
+}
+
+function staticCollision(ball) {
+    // x bounds
+    if (ball.pos.x >= width - ball.r) {
+        ball.vel.x = -ball.vel.x * elast;
+        ball.pos.x = width - ball.r;
+        ball.pingX();
+    }
+    if (ball.pos.x <= ball.r) {
+        ball.vel.x = -ball.vel.x * elast;
+        ball.pos.x = ball.r;
+        ball.pingX();
+    }
+
+    // y bound (no top edge)
+    if (ball.pos.y >= height - ball.r) {
+        // Clamp velocity to avoid infinite bouncing
+        if (Math.abs(ball.vel.y) < v_min) {
+            ball.vel.y = 0;
+        } else {
+            ball.pingY();
+        }
+        ball.vel.y = -ball.vel.y * elast;
+        ball.pos.y = height - ball.r;
+    }
+}
+
+let bg = true; // Background toggle
 
 function setup() {
-    createCanvas(600, 600, WEBGL);
-    pixelDensity(1);
-
-    // Custom shaders using GLSL
-    shaderCanvas = createShader(vertex, fragmentCanvas);
-
-    // Initialize camera object
-    cam = createCamera();
-    cam.setPosition(35, 15, 35);
-    cam.lookAt(0, 0, 0);
+    createCanvas(width, height);
+    // Initialize balls
+    for (let i = 0; i < n; i++) {
+        balls.push(new Ball());
+    }
+    setupAudio()
 }
 
 function draw() {
-    clear();
+    if (bg) {
+        background(0);
+    }
+    for (let i = 0; i < n; i++) {
+        balls[i].update();
+        staticCollision(balls[i]);
+        balls[i].render();
+    }
 
-    // Set up native p5 camera control
-    orbitControl();
-    let camPos = [cam.eyeX, cam.eyeY, cam.eyeZ];
+    fill(255)
+    text("balls: " + n, 50, 50)
+}
 
-    // Pass uniform variables
-    shader(shaderCanvas);
-    shaderCanvas.setUniform('uCamPos', camPos);
-    shaderCanvas.setUniform('iResolution', [width, height]);
+const accel = 0.1; // Click acceleration factor
+const v = 100; // Random variability of click location
 
-    quad(-1, -1, 1, -1, 1, 1, -1, 1);
+function mousePressed() {
+    Tone.start();
+    for (let i = 0; i < n; i++) {
+        // Move toward mouse
+        balls[i].vel.x += (mouseX - balls[i].pos.x + random(-v, v)) * accel;
+        balls[i].vel.y += (mouseY - balls[i].pos.y + random(-v, v)) * accel;
+    }
+}
+
+function keyPressed() {
+    // Toggle background (turn off to stack frames)
+    if (key === 't') {
+        bg = !bg;
+    }
+    // Add balls
+    if (key === 'q' && n < n_max) {
+        balls.push(new Ball());
+        n++;
+        amp = 1 / (n ** 0.5);
+    }
+    // Remove balls
+    if (key === 'a' && n >= n_min + 1) {
+        balls.pop();
+        n--;
+        amp = 1 / (n ** 0.5);
+    }
 }
