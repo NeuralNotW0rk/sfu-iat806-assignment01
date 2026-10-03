@@ -33,7 +33,7 @@ function setupAudio() {
 }
 
 // Play a single audio grain
-function playGrain(freq, gain = 0.5) {
+function playGrain(freq, gain = 0.5, pan = 0) {
     // Cancel if audio is not set up
     if (Tone.context.state !== "running" || !grainBuffer) return;
 
@@ -44,9 +44,12 @@ function playGrain(freq, gain = 0.5) {
     source.playbackRate.value = Math.max(0.1, freq / f_base);
 
     const dynamicGain = new Tone.Gain(gain * (1 / Math.sqrt(n)));
+    const panner = new Tone.Panner(constrain(pan, -1.0, 1.0));
 
+    // Sound processing chain
     source.connect(dynamicGain);
-    dynamicGain.connect(limiter);
+    dynamicGain.connect(panner);
+    panner.connect(limiter);
 
     source.start();
 }
@@ -73,7 +76,6 @@ class Ball {
     constructor(randomize = true) {
         // Radius
         this.r = r_min;
-        this.f = f_min;
 
         // Spatial vectors
         this.pos = createVector(0.0, 0.0);
@@ -99,14 +101,13 @@ class Ball {
         }
     }
 
-    pingX() {
-        let f = (1 - this.pos.y / height) * f_max + f_min + random(-10, 10);
-        playGrain(f, Math.min(Math.abs(this.vel.x) / v_max, 1.0));
-    }
-
-    pingY() {
-        let f = f_base + random(-10, 10);
-        playGrain(f, Math.min(Math.abs(this.vel.y) / v_max, 1.0));
+    ping(ground = false) {
+        let freq = f_base;
+        if (!ground) {
+            freq = (1 - this.pos.y / height) * f_max + f_min;
+        }
+        let pan = this.pos.x / width * 2 - 1;
+        playGrain(freq, 1.0, pan);
     }
 
     update() {
@@ -135,12 +136,12 @@ function staticCollision(ball) {
     if (ball.pos.x >= width - ball.r) {
         ball.vel.x = -ball.vel.x * elast;
         ball.pos.x = width - ball.r;
-        ball.pingX();
+        ball.ping();
     }
     if (ball.pos.x <= ball.r) {
         ball.vel.x = -ball.vel.x * elast;
         ball.pos.x = ball.r;
-        ball.pingX();
+        ball.ping();
     }
 
     // y bound (no top edge)
@@ -149,7 +150,7 @@ function staticCollision(ball) {
         if (Math.abs(ball.vel.y) < v_min) {
             ball.vel.y = 0;
         } else {
-            ball.pingY();
+            ball.ping(true);
         }
         ball.vel.y = -ball.vel.y * elast;
         ball.pos.y = height - ball.r;
