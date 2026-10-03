@@ -18,6 +18,11 @@ let limiter;
 
 // Prepare audio context
 function setupAudio() {
+    // Force stereo output on Chrome
+    Tone.context.destination.channelCount = 2;
+    Tone.context.destination.channelCountMode = "explicit";
+    Tone.context.destination.channelInterpretation = "speakers";
+
     // Pre-calculate grain sample
     for (let i = 0; i < length; i++) {
         const t = i / sampleRate;
