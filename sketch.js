@@ -118,7 +118,7 @@ class Ball {
             freq = (1 - this.pos.y / height) * f_max + f_min;
         }
         let pan = this.pos.x / width * 2 - 1;
-        playGrain(freq, 1.0, pan);
+        playGrain(freq, 0.5, pan);
     }
 
     update() {
