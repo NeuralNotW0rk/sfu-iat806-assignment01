@@ -82,7 +82,6 @@ const grav = 1.0; // Acceleration due to gravity (pixels per frame^2)
 let balls = [];
 let synth;
 let n = 1;
-let amp = 1.0;
 
 class Ball {
     constructor(randomize = true) {
@@ -215,12 +214,10 @@ function keyPressed() {
     if (key === 'q' && n < n_max) {
         balls.push(new Ball());
         n++;
-        amp = 1 / (n ** 0.5);
     }
     // Remove balls
     if (key === 'a' && n >= n_min + 1) {
         balls.pop();
         n--;
-        amp = 1 / (n ** 0.5);
     }
 }
