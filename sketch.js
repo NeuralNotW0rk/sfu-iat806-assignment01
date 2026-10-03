@@ -56,6 +56,13 @@ function playGrain(freq, gain = 0.5, pan = 0) {
     dynamicGain.connect(panner);
     panner.connect(limiter);
 
+    // Cleanup hook
+    source.onended = () => {
+        source.dispose();
+        dynamicGain.dispose();
+        panner.dispose();
+    };
+
     source.start();
 }
 
