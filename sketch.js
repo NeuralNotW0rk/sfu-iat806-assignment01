@@ -136,8 +136,7 @@ class Ball {
 
     render() {
         noStroke();
-        // Map z position to alpha channel
-        fill(color(this.red, this.blue, this.green, 200));
+        fill(color(this.red, this.green, this.blue, 200));
         circle(this.pos.x, this.pos.y, this.r * 2);
     }
 }
