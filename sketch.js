@@ -114,11 +114,14 @@ class Ball {
 
     ping(ground = false) {
         let freq = f_base;
+        let amp = 0.2;
         if (!ground) {
             freq = (1 - this.pos.y / height) * f_max + f_min;
+            amp = 0.5;
         }
+        freq += random(-10, 10)
         let pan = this.pos.x / width * 2 - 1;
-        playGrain(freq, 0.5, pan);
+        playGrain(freq, amp, pan);
     }
 
     update() {
